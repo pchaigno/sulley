@@ -22,6 +22,7 @@ Install distorm3
 download vtrace: 
 	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
 	extract to the same directory as the sulley folder
+	rename folder to be just vdb. (not vdb_20120806)
 
 =========================================================================================
 
@@ -60,3 +61,5 @@ Install distorm3-3.win32
 download vtrace: 
 	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
 	extract to the same directory as the sulley folder
+	rename folder to be just vdb. (not vdb_20120806)
+	
