@@ -18,7 +18,10 @@ Install distorm3
 	https://distorm.googlecode.com/files/distorm3.zip
 	$ sudo python setup.py build
 	$ sudo python setup.py build install
-
+	
+download vtrace: 
+	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
+	extract to the same directory as the sulley folder
 
 =========================================================================================
 
@@ -53,3 +56,7 @@ Install impacket
 
 Install distorm3-3.win32
 	https://distorm.googlecode.com/files/distorm3-3.win32.exe
+	
+download vtrace: 
+	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
+	extract to the same directory as the sulley folder
