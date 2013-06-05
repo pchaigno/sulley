@@ -23,6 +23,12 @@ USAGE = "USAGE: network_monitor.py"                                             
         "\n    [--port PORT]             TCP port to bind this agent to"                           \
         "\n\nNetwork Device List:\n"
 
+#check to make sure at superuser level on linux
+if sys.platform.startswith('linux'):
+  if os.geteuid() != 0:
+    print "Must be run with elevated permissions on Linux. (e.g. $ sudo python network_monitor.py ...)"
+    sys.exit(2)
+		
 # add the device list to the usage string.
 i = 0
 for dev in pcapy.findalldevs():
@@ -178,7 +184,7 @@ class network_monitor_pedrpc_server (pedrpc.server):
         self.log("initializing capture for test case #%d" % test_number)
 
         # open the capture device and set the BPF filter.
-        self.pcap = pcapy.open_live(self.device, -1, 1, 100)
+        self.pcap = pcapy.open_live(self.device, 65355, True, 100)
         self.pcap.setfilter(self.filter)
 
         # instantiate the capture thread.
