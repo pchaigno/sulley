@@ -2,14 +2,19 @@
 
 import getopt
 import sys
-sys.path.append(r"../../../paimei")
+
+sys.path.append(r"../../vdb")
+sys.path.append(r"..")
 
 import utils
-import pgraph
+
+#removed due to switch to VDB
+#sys.path.append(r"../../paimei")
+#import pgraph
 
 USAGE = "\nUSAGE: crashbin_explorer.py <xxx.crashbin>"                                      \
         "\n    [-t|--test #]     dump the crash synopsis for a specific test case number"   \
-        "\n    [-g|--graph name] generate a graph of all crash paths, save to 'name'.udg\n"
+        "\n    [-g|--graph name] generate a graph of all crash paths, save to 'name'.udg (requires paimei)\n"
 
 #
 # parse command line options.
@@ -53,8 +58,11 @@ if test_number:
 #
 
 if graph_name:
-    graph = pgraph.graph()
-
+    try:
+      graph = pgraph.graph()
+    except:
+      print "graph feature requires paimei"
+	  
 for bin, crashes in crashbin.bins.iteritems():
     synopsis = crashbin.crash_synopsis(crashes[0]).split("\n")[0]
 

@@ -22,267 +22,442 @@
 @organization: www.openrce.org
 '''
 
+#changed to use Vtrace by pdasilva
+#changed to support linux by magwitch324
+
+
+import cPickle
+import pprint
 import sys
 import zlib
-import cPickle
+
+import distorm3
+
+currentOS = sys.platform
+
 
 class __crash_bin_struct__:
-    exception_module    = None
-    exception_address   = 0
-    write_violation     = 0
-    violation_address   = 0
-    violation_thread_id = 0
-    context             = None
-    context_dump        = None
-    disasm              = None
-    disasm_around       = []
-    stack_unwind        = []
-    seh_unwind          = []
-    extra               = None
+  exception_module    = None
+  exception_address   = 0
+  write_violation     = 0
+  violation_address   = 0
+  violation_thread_id = 0
+  context             = None
+  context_dump        = None
+  disasm              = None
+  disasm_around       = []
+  stack_unwind        = []
+  seh_unwind          = []
+  extra               = None
+
+def __getitem__(self, key): 
+  return self.data[key]
 
 
 class crash_binning:
+  '''
+  @todo: Add MySQL import/export.
+  '''
+
+  bins       = {}
+  last_crash = None
+  trace      = None
+  arch       = '32' # by default we use x86 architecture
+  
+  ####################################################################################################################
+  def __init__ (self):
     '''
-    @todo: Add MySQL import/export.
     '''
 
-    bins       = {}
-    last_crash = None
-    pydbg      = None
-
-    ####################################################################################################################
-    def __init__ (self):
-        '''
-        '''
-
-        self.bins       = {}
-        self.last_crash = None
-        self.pydbg      = None
+    self.bins       = {}
+    self.last_crash = None
+    self.trace      = None
 
 
-    ####################################################################################################################
-    def record_crash (self, pydbg, extra=None):
-        '''
-        Given a PyDbg instantiation that at the current time is assumed to have "crashed" (access violation for example)
-        record various details such as the disassemly around the violating address, the ID of the offending thread, the
-        call stack and the SEH unwind. Store the recorded data in an internal dictionary, binning them by the exception
-        address.
+  ####################################################################################################################
+  def set_architecture(self, arch):
+    '''
+    set the architecture to use during disassembly. default is 32bit.
+    
+    @type  arch: string
+    @param arch: string value representing bit architecture for disassembly
+    '''
+    if arch == '16':
+      self.arch = '16'
+    elif arch == '32':
+      self.arch = '32'
+    elif arch == '64':
+      self.arch = '64'
+    else:
+      print '[!] danger: architecture probably not supported!'
+      self.arch = arch
 
-        @type  pydbg: pydbg
-        @param pydbg: Instance of pydbg
-        @type  extra: Mixed
-        @param extra: (Optional, Def=None) Whatever extra data you want to store with this bin
-        '''
 
-        self.pydbg = pydbg
-        crash = __crash_bin_struct__()
+  ####################################################################################################################
+  def record_crash (self, trace, extra=None):
+    '''
+    Given a vtrace instantiation that at the current time is assumed to have "crashed" (access violation for example)
+    record various details such as the disassemly around the violating address, the ID of the offending thread, the
+    call stack and the SEH unwind. Store the recorded data in an internal dictionary, binning them by the exception
+    address.
 
-        # add module name to the exception address.
-        exception_module = pydbg.addr_to_module(pydbg.dbg.u.Exception.ExceptionRecord.ExceptionAddress)
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
+    @type  extra: Mixed
+    @param extra: (Optional, Def=None) Whatever extra data you want to store with this bin
 
-        if exception_module:
-            exception_module = exception_module.szModule
+    '''
+
+    self.trace = trace
+    crash = __crash_bin_struct__()
+	
+    if currentOS == 'win32':
+      # add module name to the exception address.
+      exception_module = trace.getSymByAddr(trace.getMeta('Win32Event')['ExceptionAddress'], False)
+
+      if exception_module:
+        pass
+      else:
+        exception_module = "[INVALID]"
+
+      crash.exception_module    = exception_module
+      crash.exception_address   = trace.getMeta('Win32Event')['ExceptionAddress']
+      crash.write_violation     = trace.getMeta('Win32Event')['ExceptionInformation'][0]
+      crash.violation_address   = trace.getMeta('Win32Event')['ExceptionInformation'][1]
+      crash.seh_unwind          = self.seh_unwind(trace)
+	
+    else:
+      crash.exception_module    = "[INVALID]"#exception_module
+      crash.exception_address   = trace.getStackTrace()[0][0] #trace.getMeta('Win32Event')['ExceptionAddress']
+      crash.write_violation     = 2#trace.getMeta('Win32Event')['ExceptionInformation'][0]
+      crash.violation_address   = 2#trace.getMeta('Win32Event')['ExceptionInformation'][1]
+    crash.violation_thread_id = trace.getMeta('ThreadId')
+    crash.context             = self.register_context(trace, thread=crash.violation_thread_id)
+    crash.context_dump        = self.dump_register_context(crash.context, print_dots=False)
+    crash.disasm              = trace.parseOpcode(crash.exception_address)
+    crash.disasm_around       = self.disasm_around(trace, crash.exception_address, 10)
+    crash.stack_unwind        = trace.getStackTrace()
+      #crash.seh_unwind          = self.seh_unwind(trace)
+    crash.extra               = extra
+
+    # add module names to the stack unwind.
+    for i in xrange(len(crash.stack_unwind)):
+      addr   = crash.stack_unwind[i][0]
+      frame  = crash.stack_unwind[i][1]
+      try:
+        rva = self.addr_to_rva(trace, program_counter)
+      except:
+        rva = ''
+      crash.stack_unwind[i] = "rva: %s\t addr: 0x%08x\t frame:0x%08x" \
+                              % (rva, addr, frame)
+
+    if currentOS == 'win32':
+      # add module names to the SEH unwind.
+      for i in xrange(len(crash.seh_unwind)):
+        (addr, handler) = crash.seh_unwind[i]
+        try:
+          rva = self.addr_to_rva(trace, handler)
+        except:
+          rva = ''
+        crash.seh_unwind[i] = (addr, handler, "%s" % (rva, ))
+
+    if not self.bins.has_key(crash.exception_address):
+      self.bins[crash.exception_address] = []
+
+    self.bins[crash.exception_address].append(crash)
+    self.last_crash = crash
+
+
+  ####################################################################################################################
+  def disasm_around(self, trace, starting_addr, size):
+    '''
+    returns the disassembly starting at addr for size instructions.
+    
+    @type  trace: vtrace
+    @param trace: instance of vtrace
+    @type  addr: int
+    @param addr: address where to begin disassembly
+    @type  size: int
+    @param size: number of instructions to disassemble
+    '''
+    disasm = []
+    try:
+      code = trace.readMemory(starting_addr, size)
+    except:
+      raise Exception("unable to read memory for disasm")
+    
+    if self.arch == '32':
+      asm_arch = distorm3.Decode32Bits
+    elif self.arch == '64':
+      asm_arch = distorm3.Decode64Bits
+    elif self.arch == '16':
+      asm_arch = distorm3.Decode16Bits
+      
+    for inst in distorm3.DecomposeGenerator(starting_addr, 
+                                            code, 
+                                            asm_arch): 
+      if not inst.valid:
+        return disasm
+      else:
+        disasm.append(inst)
+    return disasm
+
+  ####################################################################################################################
+  def dump_register_context(self, regs, print_dots=False):
+    """
+    grab the values for each register
+
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
+    @type  print_dots: boolean
+    @param print_dots: print dots for non-ascii characters
+
+    @rtype:  string
+    @return: ascii string representation of register contexts
+    """
+    register_string = ""
+   
+    for i in sorted(regs.keys()):
+      ascii_view = ""
+      bytes_view = []
+      for byte in str(regs[i]):
+        if ord(byte) >= 0x20 and ord(byte) < 0x7f:
+          ascii_view += byte
         else:
-            exception_module = "[INVALID]"
+          if print_dots:
+            ascii_view += '.'
+        bytes_view.append("\\x%02x" % ord(byte))
+      register_string += '%s: %s-> %s\n' % (i, ''.join(bytes_view), ascii_view, )
+    return register_string
 
-        crash.exception_module    = exception_module
-        crash.exception_address   = pydbg.dbg.u.Exception.ExceptionRecord.ExceptionAddress
-        crash.write_violation     = pydbg.dbg.u.Exception.ExceptionRecord.ExceptionInformation[0]
-        crash.violation_address   = pydbg.dbg.u.Exception.ExceptionRecord.ExceptionInformation[1]
-        crash.violation_thread_id = pydbg.dbg.dwThreadId
-        crash.context             = pydbg.context
-        crash.context_dump        = pydbg.dump_context(pydbg.context, print_dots=False)
-        crash.disasm              = pydbg.disasm(crash.exception_address)
-        crash.disasm_around       = pydbg.disasm_around(crash.exception_address, 10)
-        crash.stack_unwind        = pydbg.stack_unwind()
-        crash.seh_unwind          = pydbg.seh_unwind()
-        crash.extra               = extra
+  ####################################################################################################################
+  def register_context(self, trace, thread=None):
+    """
+    grab the values for each register
 
-        # add module names to the stack unwind.
-        for i in xrange(len(crash.stack_unwind)):
-            addr   = crash.stack_unwind[i]
-            module = pydbg.addr_to_module(addr)
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
 
-            if module:
-                module = module.szModule
-            else:
-                module = "[INVALID]"
+    @rtype:  dict
+    @return: register contexts
+    """
+    registers = {}
+    count = 0
+    
+    if not(thread):
+      regs = trace
+    else:
+      regs = trace.getRegisterContext(threadid=thread)
+      
+    for reg in regs.getRegisterNames():
+      registers[reg] = regs.getRegisterByName(reg)
+    return registers
+ 
 
-            crash.stack_unwind[i] = "%s:%08x" % (module, addr)
+  ####################################################################################################################
+  def stack_unwind(self, trace, thread=None):
+    '''
+    walk and save the stack trace for the current (or specified) thread.
+    will be saved in the format [rva, instr addr, frame pointer]
 
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
+    @type  thread: integer
+    @param thread: id of thread to process seh chain
 
-        # add module names to the SEH unwind.
-        for i in xrange(len(crash.seh_unwind)):
-            (addr, handler) = crash.seh_unwind[i]
+    @rtype:  list
+    @return: list containing stack trace in (rva, instr addr, frame pointer) format
+    '''
+    call_chain = trace.getStackTrace()
+    
+    for i in xrange(len(call_chain)):
+      addr  = call_chain[i][0]
+      frame = call_chain[i][1]
+      try:
+        rva = self.addr_to_rva(trace, addr)
+      except:
+        rva = ''
+      call_chain[i] = "rva: %20s\t addr: 0x%08x\t frame:0x%08x" \
+                      % (rva, addr, frame)
 
-            module = pydbg.addr_to_module(handler)
-
-            if module:
-                module = module.szModule
-            else:
-                module = "[INVALID]"
-
-            crash.seh_unwind[i] = (addr, handler, "%s:%08x" % (module, handler))
-
-        if not self.bins.has_key(crash.exception_address):
-            self.bins[crash.exception_address] = []
-
-        self.bins[crash.exception_address].append(crash)
-        self.last_crash = crash
-
-
-    ####################################################################################################################
-    def crash_synopsis (self, crash=None):
-        '''
-        For the supplied crash, generate and return a report containing the disassemly around the violating address,
-        the ID of the offending thread, the call stack and the SEH unwind. If not crash is specified, then call through
-        to last_crash_synopsis() which returns the same information for the last recorded crash.
-
-        @see: crash_synopsis()
-
-        @type  crash: __crash_bin_struct__
-        @param crash: (Optional, def=None) Crash object to generate report on
-
-        @rtype:  String
-        @return: Crash report
-        '''
-
-        if not crash:
-            return self.last_crash_synopsis()
-
-        if crash.write_violation:
-            direction = "write to"
-        else:
-            direction = "read from"
-
-        synopsis = "%s:%08x %s from thread %d caused access violation\nwhen attempting to %s 0x%08x\n\n" % \
-            (
-                crash.exception_module,       \
-                crash.exception_address,      \
-                crash.disasm,                 \
-                crash.violation_thread_id,    \
-                direction,                    \
-                crash.violation_address       \
-            )
-
-        synopsis += crash.context_dump
-
-        synopsis += "\ndisasm around:\n"
-        for (ea, inst) in crash.disasm_around:
-            synopsis += "\t0x%08x %s\n" % (ea, inst)
-
-        if len(crash.stack_unwind):
-            synopsis += "\nstack unwind:\n"
-            for entry in crash.stack_unwind:
-                synopsis += "\t%s\n" % entry
-
-        if len(crash.seh_unwind):
-            synopsis += "\nSEH unwind:\n"
-            for (addr, handler, handler_str) in crash.seh_unwind:
-                synopsis +=  "\t%08x -> %s\n" % (addr, handler_str)
-
-        return synopsis + "\n"
+    return call_chain
 
 
-    ####################################################################################################################
-    def export_file (self, file_name):
-        '''
-        Dump the entire object structure to disk.
+  ####################################################################################################################
+  def seh_unwind(self, trace, thread=None):
+    '''
+    walk and save the SEH chain for the current (or specified) thread.
+    will be saved in the format [reg record addr, handler]
+    adapted from vdb/vdb/extensions/windows.py seh(vdb, line)
 
-        @see: import_file()
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
+    @type  thread: integer
+    @param thread: id of thread to process seh chain
 
-        @type  file_name:   String
-        @param file_name:   File name to export to
+    @rtype:  list
+    @return: list containing seh chain in (reg record addr, handler) format
+    '''
+    seh_chain = []
 
-        @rtype:             crash_binning
-        @return:            self
-        '''
+    if not(thread):
+      thread = trace.getMeta('ThreadId')
 
-        # null out what we don't serialize but save copies to restore after dumping to disk.
-        last_crash = self.last_crash
-        pydbg      = self.pydbg
+    thread_info = trace.getThreads().get(thread, None)
+    if not(thread_info):
+      raise Exception("Unknown Thread Id: %d" % thread)
 
-        self.last_crash = self.pydbg = None
-
-        fh = open(file_name, "wb+")
-        fh.write(zlib.compress(cPickle.dumps(self, protocol=2)))
-        fh.close()
-
-        self.last_crash = last_crash
-        self.pydbg      = pydbg
-
-        return self
-
-
-    ####################################################################################################################
-    def import_file (self, file_name):
-        '''
-        Load the entire object structure from disk.
-
-        @see: export_file()
-
-        @type  file_name:   String
-        @param file_name:   File name to import from
-
-        @rtype:             crash_binning
-        @return:            self
-        '''
-
-        fh  = open(file_name, "rb")
-        tmp = cPickle.loads(zlib.decompress(fh.read()))
-        fh.close()
-
-        self.bins = tmp.bins
-
-        return self
+    teb = trace.getStruct("ntdll.TEB", thread_info)
+    addr = long(teb.NtTib.ExceptionList)
+    while addr != 0xffffffff:
+      er = trace.getStruct("ntdll.EXCEPTION_REGISTRATION_RECORD", addr)
+      seh_chain.append((addr, er))
+      addr = long(er.Next)
+    return seh_chain
 
 
-    ####################################################################################################################
-    def last_crash_synopsis (self):
-        '''
-        For the last recorded crash, generate and return a report containing the disassemly around the violating
-        address, the ID of the offending thread, the call stack and the SEH unwind.
+  ####################################################################################################################
+  def addr_to_rva(self, trace, addr):
+    """
+    Convert a virtual address to the RVA with a module name so we 
+    can find it even with ASLR.
 
-        @see: crash_synopsis()
+    @type  trace: vtrace
+    @param trace: Instance of vtrace
+    @type  addr: integer
+    @param addr: address to convert to relative virtual address (rva)
 
-        @rtype:  String
-        @return: Crash report
-        '''
+    @rtype:  string
+    @return: string representation of rva in [module base]+offset format
+    """
+    sym_for_addr = ''
+    if trace.getSymByAddr(addr , False):
+      sym_for_ret_addr = '[ ' + trace.getSymByAddr(addr, False) + ']'
 
-        if self.last_crash.write_violation:
-            direction = "write to"
-        else:
-            direction = "read from"
+    mem_map = trace.getMemoryMap(addr)
 
-        synopsis = "%s:%08x %s from thread %d caused access violation\nwhen attempting to %s 0x%08x\n\n" % \
-            (
-                self.last_crash.exception_module,       \
-                self.last_crash.exception_address,      \
-                self.last_crash.disasm,                 \
-                self.last_crash.violation_thread_id,    \
-                direction,                              \
-                self.last_crash.violation_address       \
-            )
+    if not(mem_map):
+      raise Exception("memory not mapped")
 
-        synopsis += self.last_crash.context_dump
+    rva = addr - mem_map[0]
+    base_module = mem_map[3][mem_map[3].rfind('\\'):].replace('\\','')
+    base_module = base_module.replace('.dll','')
 
-        synopsis += "\ndisasm around:\n"
-        for (ea, inst) in self.last_crash.disasm_around:
-            synopsis += "\t0x%08x %s\n" % (ea, inst)
+    return base_module + ('+%08x' % rva) + ' ' + sym_for_addr
 
-        if len(self.last_crash.stack_unwind):
-            synopsis += "\nstack unwind:\n"
-            for entry in self.last_crash.stack_unwind:
-                synopsis += "\t%s\n" % entry
 
-        if len(self.last_crash.seh_unwind):
-            synopsis += "\nSEH unwind:\n"
-            for (addr, handler, handler_str) in self.last_crash.seh_unwind:
-                try:
-                    disasm = self.pydbg.disasm(handler)
-                except:
-                    disasm = "[INVALID]"
+  ####################################################################################################################
+  def crash_synopsis (self, crash=None):
+    '''
+    For the supplied crash, generate and return a report containing the disassemly around the violating address,
+    the ID of the offending thread, the call stack and the SEH unwind. If no crash is specified, then return the 
+    same information for the last recorded crash.
 
-                synopsis +=  "\t%08x -> %s %s\n" % (addr, handler_str, disasm)
+    @see: crash_synopsis()
 
-        return synopsis + "\n"
+    @type  crash: __crash_bin_struct__
+    @param crash: (Optional, def=None) Crash object to generate report on
+
+    @rtype:  String
+    @return: Crash report
+    '''
+
+    if not crash:
+      crash = self.last_crash
+
+    if crash.write_violation:
+      direction = "write to"
+    else:
+      direction = "read from"
+
+    synopsis = "%s:%08x %s from thread %d caused access violation\nwhen attempting to %s 0x%08x\n\n" % \
+      (
+        crash.exception_module,       \
+        crash.exception_address,      \
+        crash.disasm,                 \
+        crash.violation_thread_id,    \
+        direction,                    \
+        crash.violation_address       \
+      )
+
+    synopsis += crash.context_dump
+
+    synopsis += "\ndisasm around:\n"
+    for inst in crash.disasm_around:
+      synopsis += "\t0x%08s %s\n" % (hex(inst.address).replace('L',''),
+                                     str(inst))
+
+    if len(crash.stack_unwind):
+      synopsis += "\nstack unwind:\n"
+      for entry in crash.stack_unwind:
+        synopsis += "\t%s\n" % entry
+		
+		
+    if currentOS == 'win32':
+      if len(crash.seh_unwind):
+        synopsis += "\nSEH unwind:\n"
+        for (addr, handler, handler_str) in crash.seh_unwind:
+          try:
+            disasm = trace.parseOpcode(addr)
+          except:
+            disasm = "[INVALID]"
+
+          synopsis +=  "\t0x%08x -> %s\t %s\n" % (addr, handler_str, disasm)
+
+    return synopsis + "\n"
+
+
+  ####################################################################################################################
+  def export_file (self, file_name):
+    '''
+    Dump the entire object structure to disk.
+
+    @see: import_file()
+
+    @type  file_name:   String
+    @param file_name:   File name to export to
+
+    @rtype:             crash_binning
+    @return:            self
+    '''
+
+    # null out what we don't serialize but save copies to restore after dumping to disk.
+    last_crash = self.last_crash
+    trace      = self.trace
+
+    self.last_crash = self.trace = None
+
+    fh = open(file_name, "wb+")
+    fh.write(zlib.compress(cPickle.dumps(self, protocol=2)))
+    fh.close()
+
+    self.last_crash = last_crash
+    self.trace      = trace
+
+    return self
+
+
+  ####################################################################################################################
+  def import_file (self, file_name):
+    '''
+    Load the entire object structure from disk.
+
+    @see: export_file()
+
+    @type  file_name:   String
+    @param file_name:   File name to import from
+
+    @rtype:             crash_binning
+    @return:            self
+    '''
+
+    fh  = open(file_name, "rb")
+    tmp = cPickle.loads(zlib.decompress(fh.read()))
+    fh.close()
+
+    self.bins = tmp.bins
+
+    return self
+
+
+  ####################################################################################################################
