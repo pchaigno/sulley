@@ -12,7 +12,8 @@ try:
   # attempt to import the vtrace module
   import vtrace
 except:
-  VDB_ROOT = "..\\vdb\\"
+  VDB_ROOT = "..//vdb//"
+
   sys.path.append(VDB_ROOT)
   import vtrace
 
@@ -30,7 +31,9 @@ USAGE = "USAGE: process_monitor.py"\
         "\n    [-p|--proc_name NAME]     process name to search for and attach to"\
         "\n    [-i|--ignore_pid PID]     ignore this PID when searching for the target process"\
         "\n    [-l|--log_level LEVEL]    log level (default 1), increase for more verbosity"\
-        "\n    [--port PORT]             TCP port to bind this agent to"
+        "\n    [--port PORT]             TCP port to bind this agent to"\
+        "\n    [--proc_list]             Show a list of all running process names and PIDs"
+currentOS = sys.platform
   
 ########################################################################################################################
 class ScriptError(Exception):
@@ -60,29 +63,31 @@ class CallbackNotifier(vtrace.Notifier):
     if event == vtrace.NOTIFY_SIGNAL: # 1
       # detect an access violation
       self.dbg.process_monitor.log("signal/exception detected witch code: %s" % (trace.getCurrentSignal(), ))
+      if currentOS == 'win32':
       
-      event_info = trace.getMeta('Win32Event')
-      for event in event_info.keys():
-        try:
-          self.dbg.process_monitor.log('\t%s value: 0x%08x' % (event, event_info[event]))
-        except:
-          self.dbg.process_monitor.log('\t%s value: %s' % (event, event_info[event]))
+        event_info = trace.getMeta('Win32Event')
+        for event in event_info.keys():
+          try:
+            self.dbg.process_monitor.log('\t%s value: 0x%08x' % (event, event_info[event]))
+          except:
+            self.dbg.process_monitor.log('\t%s value: %s' % (event, event_info[event]))
 
-      # ignore first chance exceptions
-      if event_info['FirstChance'] == 1:
-        self.dbg.process_monitor.log("first chance exception")
+        # ignore first chance exceptions
+        if event_info['FirstChance'] == 1:
+          self.dbg.process_monitor.log("first chance exception")
 
-      if trace.getCurrentSignal() == CallbackNotifier.ACCESS_VIOLATION:
-        self.dbg_callback_access_violation(trace)
-      else:
+        if trace.getCurrentSignal() == CallbackNotifier.ACCESS_VIOLATION:
+          self.dbg_callback_access_violation(trace)
+        else:
 
-        regs = self.dbg.process_monitor.crash_bin.register_context(trace)
-        reg = self.dbg.process_monitor.crash_bin.dump_register_context(regs, print_dots=True)
-        self.dbg.process_monitor.log("Register Context: \n%s\n" % reg, 2)
+          regs = self.dbg.process_monitor.crash_bin.register_context(trace)
+          reg = self.dbg.process_monitor.crash_bin.dump_register_context(regs, print_dots=True)
+          self.dbg.process_monitor.log("Register Context: \n%s\n" % reg, 2)
         
-        stack = self.dbg.process_monitor.crash_bin.stack_unwind(trace)
-        self.dbg.process_monitor.log("Stack Trace: \n%s\n" % '\n'.join(stack), 2)
-
+          stack = self.dbg.process_monitor.crash_bin.stack_unwind(trace)
+          self.dbg.process_monitor.log("Stack Trace: \n%s\n" % '\n'.join(stack), 2)
+      else:
+        self.dbg_callback_access_violation(trace)
     elif event == vtrace.NOTIFY_BREAK: # 2
       pass
     elif event == vtrace.NOTIFY_CONTINUE: # 5
@@ -154,7 +159,6 @@ class debugger_thread(threading.Thread):
     callbacks.
     '''
     threading.Thread.__init__(self)
-
     self.process_monitor  = process_monitor
     self.proc_name        = proc_name
     self.ignore_pid       = ignore_pid
@@ -163,7 +167,7 @@ class debugger_thread(threading.Thread):
     self.active           = True
     self.trace            = vtrace.getTrace()
     self.pid              = None
-
+    #print self.trace.ps()
     # give this thread a unique name.
     self.setName("%d" % time.time())
 
@@ -180,7 +184,6 @@ class debugger_thread(threading.Thread):
     try:
       self.watch()
       self.trace.attach(self.pid)
-
       # set the user callback which is responseable for checking if this thread has been killed.
       self.process_monitor.log("registering notifiers")
       self.trace.registerNotifier(vtrace.NOTIFY_ALL, CallbackNotifier(self))
@@ -203,7 +206,6 @@ class debugger_thread(threading.Thread):
         if name.lower() == self.proc_name.lower():
           self.pid = pid
           break
-
     self.process_monitor.log("debugger thread-%s found match on pid %d" % (self.getName(), self.pid))
 
 
@@ -442,7 +444,14 @@ class process_monitor_pedrpc_server (pedrpc.server):
 if __name__ == "__main__":
   # parse command line options.
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "c:i:l:p:", ["crash_bin=", "ignore_pid=", "log_level=", "proc_name=", "port="])
+    if '--proc_list' in sys.argv[1]:
+      print vtrace.getTrace().ps()
+      sys.exit(1)
+  except IndexError:
+    ERR(USAGE)
+
+  try:
+    opts, args = getopt.getopt(sys.argv[1:], "c:i:l:p:-print:", ["crash_bin=", "ignore_pid=", "log_level=", "proc_name=", "port="])
   except getopt.GetoptError:
     ERR(USAGE)
 
