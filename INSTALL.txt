@@ -21,8 +21,9 @@ Install distorm3
 	
 download vtrace: 
 	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
-	extract to the same directory as the sulley folder
+	extract to the same directory as the sulley-master folder (aka the level above process_monitor.py network_monitor.py etc.)
 	rename folder to be just vdb. (not vdb_20120806)
+rename sulley-master to sulley
 
 =========================================================================================
 
@@ -44,7 +45,7 @@ Add to path:
 	;C:\Python27\;C:\Python27\scripts\;C:\MinGW\bin;
 
 install pcapy:
-	http://corelabs.coresecurity.com/index.php?module=Wiki&action=attachment&type=tool&page=Pcapy&file=pcapy-0.10.7.zip
+	http://corelabs.coresecurity.com/index.php?module=Wiki&action=attachment&type=tool&page=Pcapy&file=pcapy-0.10.8.zip
 	Extract
 	$ python setup.py build_ext -c mingw32 -I C:\WpdPack_4_1_2\WpdPack\Include -L C:\WpdPack_4_1_2\WpdPack\Lib
 	$ python setup.py install
@@ -60,6 +61,8 @@ Install distorm3-3.win32
 	
 download vtrace: 
 	http://www.talesofacoldadmin.com/vdb/vdb_20120806.zip
-	extract to the same directory as the sulley folder
+	extract to the same directory as the sulley-master folder (aka the level above process_monitor.py network_monitor.py etc.)
 	rename folder to be just vdb. (not vdb_20120806)
+
+rename sulley-master to sulley
 	
