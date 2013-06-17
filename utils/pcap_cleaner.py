@@ -2,7 +2,8 @@
 
 import os
 import sys
-sys.path.append(r"..\..\..\paimei")
+#sys.path.append(r"..\..\..\paimei")
+sys.path.append(r"..")
 
 import utils
 
